@@ -6,6 +6,7 @@ import pandas as pd
 from model import EntityTyping
 from sklearn.metrics import accuracy_score
 from torch.utils.data import Dataset, DataLoader
+from transformers import BertTokenizer, BertConfig, BertModel
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 dictionary = pickle.load(open('./src/data/dictionary.pkl', mode='rb'))
@@ -23,12 +24,36 @@ def sentence2ids(sentence, max_len=60):
     else:
         return np.array([dictionary.get(char, 0) for char in sentence] + [0] * (max_len - len(sentence)))
 
+# tokenizer = BertTokenizer.from_pretrained('../bert-base-cased')
+# bert_config = BertConfig.from_pretrained('../bert-base-cased')
+# bert_model = BertModel.from_pretrained('../bert-base-cased', config=bert_config)
+
+
+def bert_embed(text, max_len=60):
+    tokens = []
+    for _ch in text:
+        if _ch in [' ', '\t', '\n']:
+            tokens.append(['[BLANK]'])
+        else:
+            if not len(tokenizer.tokenize(_ch)):
+                tokens.append('[UNK]')
+            else:
+                tokens.append(_ch)
+    
+    return tokenizer.encode_plus(
+        text=tokens,
+        add_special_tokens=True,
+        truncation=True,
+        max_length=max_len,
+        return_tensors='np'
+    )
+
 
 class DealDataset(Dataset):
     def __init__(self, data):
         self.len = data.shape[0]
         self.text = data.text.map(sentence2ids).tolist()
-        self.mention = data.mention.map(sentence2ids).tolist()
+        # self.mention = data.mention.map(sentence2ids).tolist()
         self.start = data.offset.tolist()
         self.end = data.offset + data.mention.str.len().tolist()
         # self.end = self.end.tolist()
@@ -36,8 +61,8 @@ class DealDataset(Dataset):
             lambda x: mention_type2id[x]).tolist()
 
     def __getitem__(self, index):
-        # return self.mention[index], self.start[index], self.end[index], self.text[index], self.label[index]
-        return torch.LongTensor(self.mention[index]), torch.LongTensor(self.start[index]), torch.LongTensor(self.end[index]), torch.LongTensor(self.text[index]), torch.LongTensor(self.label[index])
+        # return self.start[index], self.end[index], self.text[index], self.label[index]
+        return self.start[index], self.end[index], torch.LongTensor(self.text[index]), self.label[index]
 
     def __len__(self):
         return self.len
@@ -46,7 +71,7 @@ class DealDataset(Dataset):
 def evalute(eval_loader, model):
     preds, ys = [], []
     for step, (mention, start, end, text, y) in enumerate(eval_loader):
-        mention, start, end, text, y = mention.to(device), start.to(
+        mention, start, end, text, y = start.to(
             device), end.to(device), text.to(device), y.to(device)
 
         pred = model(text, start, end)
@@ -64,8 +89,8 @@ def train(train_loader, eval_loader, model):
     size = len(train_loader.dataset)
     for epoch in range(100):
         print('epoch: {}'.format(epoch))
-        for step, (mention, start, end, text, y) in enumerate(train_loader):
-            mention, start, end, text, y = mention.to(device), start.to(
+        for step, (start, end, text, y) in enumerate(train_loader):
+            start, end, text, y = start.to(
                 device), end.to(device), text.to(device), y.to(device)
 
             preds = model(text, start, end)
@@ -76,7 +101,7 @@ def train(train_loader, eval_loader, model):
             optimizer.zero_grad()
 
             if step % 64 == 0:
-                loss, current = loss.item(), step * len(mention)
+                loss, current = loss.item(), step * len(y)
                 print(f"loss: {loss:>7f} [{current:>5d} / {size:>5d}]")
 
         train_acc = evalute(eval_loader, model)

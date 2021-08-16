@@ -20,28 +20,32 @@ class EntityTyping(nn.Module):
                               batch_first=True, 
                               bidirectional=True)
         self.dropout = nn.Dropout(p=0.5)
-        self.bn = nn.BatchNorm1d(self.hidden_size)
-        self.linear = nn.Linear(240, 128)
+        self.bn = nn.BatchNorm1d(60)
+        self.linear = nn.Linear(160*3, 256)
+        self.out = nn.Linear(256, type_num)
 
         self.criterion = nn.CrossEntropyLoss()
         self.optimizer = torch.optim.Adam(self.parameters(), lr=2e-5, eps=1e-8)
 
-        self.attention = Attention(hidden_size)
+        self.attention = Attention(hidden_size*2)
 
     def forward(self, sentence, start, end):
         sentence_vec = self.embedding(sentence)
-        sentence_vec = self.bn(sentence_vec)
+        bisentence_vec, (h_n, c_n) = self.bilstm(sentence_vec)
+        bisentence_vec = self.bn(bisentence_vec)
+        bisentence_vec = self.dropout(bisentence_vec)
 
         entity_start, entity_end = [], []
-        for id_in_batch, (s, e) in enumerate((start, end)):
-            entity_start.append(sentence_vec[id_in_batch, s, :])
-            entity_end.append(sentence_vec[id_in_batch, e, :])
+        for id_in_batch, (s, e) in enumerate(zip(start, end)):
+            entity_start.append(bisentence_vec[id_in_batch, s, :])
+            entity_end.append(bisentence_vec[id_in_batch, e, :])
         entity = torch.hstack((
             torch.vstack(entity_start),
             torch.vstack(entity_end),
         ))
 
-        sentence_att = self.attention(sentence_vec)
+        sentence_att = self.attention(bisentence_vec)
         concat = torch.hstack((sentence_att, entity))
         out = self.linear(concat)
+        out = self.out(out)
         return out
